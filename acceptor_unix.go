@@ -33,9 +33,10 @@ import (
 func (svr *server) acceptNewConnection(fd int) error {
 	nfd, sa, err := unix.Accept(fd)
 	if err != nil {
-		if err == unix.EAGAIN {
+		if err == unix.EAGAIN || err == unix.ECONNABORTED {
 			return nil
 		}
+
 		svr.logger.Errorf("accept error: %v", err)
 		return errors.ErrAcceptSocket
 	}
