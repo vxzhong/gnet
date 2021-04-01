@@ -1,4 +1,5 @@
-// Copyright (c) 2019 Andy Pan
+// Copyright (c) 2020 Andy Pan
+// Copyright (c) 2017 Max Riveiro
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -18,41 +19,34 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// +build freebsd dragonfly darwin
+// Package reuseport provides functions that return fd and net.Addr based on
+// given the protocol and address with a SO_REUSEPORT option set to the socket.
 
-package netpoll
+// +build linux freebsd dragonfly darwin
 
-import "golang.org/x/sys/unix"
+package socket
 
-const (
-	// InitEvents represents the initial length of poller event-list.
-	InitEvents = 64
-	// AsyncTasks is the maximum number of asynchronous tasks that the event-loop will process at one time.
-	AsyncTasks = 48
-	// EVFilterWrite represents writeable events from sockets.
-	EVFilterWrite = unix.EVFILT_WRITE
-	// EVFilterRead represents readable events from sockets.
-	EVFilterRead = unix.EVFILT_READ
-	// EVFilterSock represents exceptional events that are not read/write, like socket being closed,
-	// reading/writing from/to a closed socket, etc.
-	EVFilterSock = -0xd
+import (
+	"net"
 )
 
-type eventList struct {
-	size   int
-	events []unix.Kevent_t
+// Option is used for setting an option on socket.
+type Option struct {
+	SetSockopt func(int, int) error
+	Opt        int
 }
 
-func newEventList(size int) *eventList {
-	return &eventList{size, make([]unix.Kevent_t, size)}
+// TCPSocket calls the internal tcpSocket.
+func TCPSocket(proto, addr string, sockopts ...Option) (int, net.Addr, error) {
+	return tcpSocket(proto, addr, sockopts...)
 }
 
-func (el *eventList) expand() {
-	el.size <<= 1
-	el.events = make([]unix.Kevent_t, el.size)
+// UDPSocket calls the internal udpSocket.
+func UDPSocket(proto, addr string, sockopts ...Option) (int, net.Addr, error) {
+	return udpSocket(proto, addr, sockopts...)
 }
 
-func (el *eventList) shrink() {
-	el.size >>= 1
-	el.events = make([]unix.Kevent_t, el.size)
+// UnixSocket calls the internal udsSocket.
+func UnixSocket(proto, addr string, sockopts ...Option) (int, net.Addr, error) {
+	return udsSocket(proto, addr, sockopts...)
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2019 Andy Pan
+// Copyright (c) 2017 Ma Weiwei, Max Riveiro
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -18,41 +18,46 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// +build freebsd dragonfly darwin
+package socket
 
-package netpoll
+import (
+	"bufio"
+	"os"
+	"strconv"
+	"strings"
 
-import "golang.org/x/sys/unix"
-
-const (
-	// InitEvents represents the initial length of poller event-list.
-	InitEvents = 64
-	// AsyncTasks is the maximum number of asynchronous tasks that the event-loop will process at one time.
-	AsyncTasks = 48
-	// EVFilterWrite represents writeable events from sockets.
-	EVFilterWrite = unix.EVFILT_WRITE
-	// EVFilterRead represents readable events from sockets.
-	EVFilterRead = unix.EVFILT_READ
-	// EVFilterSock represents exceptional events that are not read/write, like socket being closed,
-	// reading/writing from/to a closed socket, etc.
-	EVFilterSock = -0xd
+	"golang.org/x/sys/unix"
 )
 
-type eventList struct {
-	size   int
-	events []unix.Kevent_t
-}
+func maxListenerBacklog() int {
+	fd, err := os.Open("/proc/sys/net/core/somaxconn")
+	if err != nil {
+		return unix.SOMAXCONN
+	}
+	defer fd.Close()
 
-func newEventList(size int) *eventList {
-	return &eventList{size, make([]unix.Kevent_t, size)}
-}
+	rd := bufio.NewReader(fd)
+	line, err := rd.ReadString('\n')
+	if err != nil {
+		return unix.SOMAXCONN
+	}
 
-func (el *eventList) expand() {
-	el.size <<= 1
-	el.events = make([]unix.Kevent_t, el.size)
-}
+	f := strings.Fields(line)
+	if len(f) < 1 {
+		return unix.SOMAXCONN
+	}
 
-func (el *eventList) shrink() {
-	el.size >>= 1
-	el.events = make([]unix.Kevent_t, el.size)
+	n, err := strconv.Atoi(f[0])
+	if err != nil || n == 0 {
+		return unix.SOMAXCONN
+	}
+
+	// Linux stores the backlog in a uint16.
+	// Truncate number to avoid wrapping.
+	// See issue 5030.
+	if n > 1<<16-1 {
+		n = 1<<16 - 1
+	}
+
+	return n
 }

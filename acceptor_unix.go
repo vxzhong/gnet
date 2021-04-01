@@ -26,7 +26,7 @@ import (
 	"os"
 
 	"github.com/panjf2000/gnet/errors"
-	"github.com/panjf2000/gnet/internal/netpoll"
+	"github.com/panjf2000/gnet/internal/socket"
 	"golang.org/x/sys/unix"
 )
 
@@ -44,17 +44,23 @@ func (svr *server) acceptNewConnection(fd int) error {
 		return err
 	}
 
-	netAddr := netpoll.SockaddrToTCPOrUnixAddr(sa)
+	netAddr := socket.SockaddrToTCPOrUnixAddr(sa)
 	el := svr.lb.next(netAddr)
 	c := newTCPConn(nfd, el, sa, netAddr)
 
-	_ = el.poller.Trigger(func() (err error) {
+	err = el.poller.Trigger(func() (err error) {
 		if err = el.poller.AddRead(nfd); err != nil {
+			_ = unix.Close(nfd)
+			c.releaseTCP()
 			return
 		}
 		el.connections[nfd] = c
 		err = el.loopOpen(c)
 		return
 	})
+	if err != nil {
+		_ = unix.Close(nfd)
+		c.releaseTCP()
+	}
 	return nil
 }

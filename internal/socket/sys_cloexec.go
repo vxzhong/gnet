@@ -1,4 +1,4 @@
-// Copyright (c) 2019 Andy Pan
+// Copyright (c) 2020 Andy Pan
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -18,41 +18,30 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// +build freebsd dragonfly darwin
+// +build darwin
 
-package netpoll
+package socket
 
-import "golang.org/x/sys/unix"
+import (
+	"syscall"
 
-const (
-	// InitEvents represents the initial length of poller event-list.
-	InitEvents = 64
-	// AsyncTasks is the maximum number of asynchronous tasks that the event-loop will process at one time.
-	AsyncTasks = 48
-	// EVFilterWrite represents writeable events from sockets.
-	EVFilterWrite = unix.EVFILT_WRITE
-	// EVFilterRead represents readable events from sockets.
-	EVFilterRead = unix.EVFILT_READ
-	// EVFilterSock represents exceptional events that are not read/write, like socket being closed,
-	// reading/writing from/to a closed socket, etc.
-	EVFilterSock = -0xd
+	"golang.org/x/sys/unix"
 )
 
-type eventList struct {
-	size   int
-	events []unix.Kevent_t
-}
+func sysSocket(family, sotype, proto int) (fd int, err error) {
+	syscall.ForkLock.RLock()
+	if fd, err = unix.Socket(family, sotype, proto); err == nil {
+		unix.CloseOnExec(fd)
+	}
+	syscall.ForkLock.RUnlock()
 
-func newEventList(size int) *eventList {
-	return &eventList{size, make([]unix.Kevent_t, size)}
-}
+	if err != nil {
+		return
+	}
 
-func (el *eventList) expand() {
-	el.size <<= 1
-	el.events = make([]unix.Kevent_t, el.size)
-}
+	if err = unix.SetNonblock(fd, true); err != nil {
+		_ = unix.Close(fd)
+	}
 
-func (el *eventList) shrink() {
-	el.size >>= 1
-	el.events = make([]unix.Kevent_t, el.size)
+	return
 }

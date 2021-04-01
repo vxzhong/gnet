@@ -1,4 +1,5 @@
-// Copyright (c) 2019 Andy Pan
+// Copyright (c) 2020 Andy Pan
+// Copyright (c) 2017 Ma Weiwei, Max Riveiro
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -20,39 +21,33 @@
 
 // +build freebsd dragonfly darwin
 
-package netpoll
+package socket
 
-import "golang.org/x/sys/unix"
+import (
+	"runtime"
 
-const (
-	// InitEvents represents the initial length of poller event-list.
-	InitEvents = 64
-	// AsyncTasks is the maximum number of asynchronous tasks that the event-loop will process at one time.
-	AsyncTasks = 48
-	// EVFilterWrite represents writeable events from sockets.
-	EVFilterWrite = unix.EVFILT_WRITE
-	// EVFilterRead represents readable events from sockets.
-	EVFilterRead = unix.EVFILT_READ
-	// EVFilterSock represents exceptional events that are not read/write, like socket being closed,
-	// reading/writing from/to a closed socket, etc.
-	EVFilterSock = -0xd
+	"golang.org/x/sys/unix"
 )
 
-type eventList struct {
-	size   int
-	events []unix.Kevent_t
-}
-
-func newEventList(size int) *eventList {
-	return &eventList{size, make([]unix.Kevent_t, size)}
-}
-
-func (el *eventList) expand() {
-	el.size <<= 1
-	el.events = make([]unix.Kevent_t, el.size)
-}
-
-func (el *eventList) shrink() {
-	el.size >>= 1
-	el.events = make([]unix.Kevent_t, el.size)
+func maxListenerBacklog() int {
+	var (
+		n   uint32
+		err error
+	)
+	switch runtime.GOOS {
+	case "darwin":
+		n, err = unix.SysctlUint32("kern.ipc.somaxconn")
+	case "freebsd":
+		n, err = unix.SysctlUint32("kern.ipc.soacceptqueue")
+	}
+	if n == 0 || err != nil {
+		return unix.SOMAXCONN
+	}
+	// FreeBSD stores the backlog in a uint16, as does Linux.
+	// Assume the other BSDs do too. Truncate number to avoid wrapping.
+	// See issue 5030.
+	if n > 1<<16-1 {
+		n = 1<<16 - 1
+	}
+	return int(n)
 }
