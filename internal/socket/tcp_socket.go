@@ -135,6 +135,11 @@ func tcpSocket(proto, addr string, sockopts ...Option) (fd int, netAddr net.Addr
 		}
 	}
 
+	// 关闭后，立即可用，不经过time_wait/close_wait
+	if err = os.NewSyscallError("setsockopt", unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)); err != nil {
+		return
+	}
+
 	if err = os.NewSyscallError("bind", unix.Bind(fd, sockaddr)); err != nil {
 		return
 	}
