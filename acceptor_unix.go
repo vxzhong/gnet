@@ -1,4 +1,4 @@
-// Copyright (c) 2019 Andy Pan
+// Copyright (c) 2021 Andy Pan
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,20 +24,23 @@ package gnet
 
 import (
 	"os"
+	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/panjf2000/gnet/errors"
+	"github.com/panjf2000/gnet/internal/netpoll"
 	"github.com/panjf2000/gnet/internal/socket"
-	"golang.org/x/sys/unix"
+	"github.com/panjf2000/gnet/logging"
 )
 
-func (svr *server) acceptNewConnection(fd int) error {
-	nfd, sa, err := unix.Accept(fd)
+func (svr *server) acceptNewConnection(_ netpoll.IOEvent) error {
+	nfd, sa, err := unix.Accept(svr.ln.fd)
 	if err != nil {
 		if err == unix.EAGAIN || err == unix.ECONNABORTED {
 			return nil
 		}
-
-		svr.logger.Errorf("accept error: %v", err)
+		svr.opts.Logger.Errorf("Accept() fails due to error: %v", err)
 		return errors.ErrAcceptSocket
 	}
 	if err = os.NewSyscallError("fcntl nonblock", unix.SetNonblock(nfd, true)); err != nil {
@@ -45,22 +48,49 @@ func (svr *server) acceptNewConnection(fd int) error {
 	}
 
 	netAddr := socket.SockaddrToTCPOrUnixAddr(sa)
+	if svr.opts.TCPKeepAlive > 0 && svr.ln.network == "tcp" {
+		err = socket.SetKeepAlive(nfd, int(svr.opts.TCPKeepAlive/time.Second))
+		logging.LogErr(err)
+	}
+
 	el := svr.lb.next(netAddr)
 	c := newTCPConn(nfd, el, sa, netAddr)
 
-	err = el.poller.Trigger(func() (err error) {
-		if err = el.poller.AddRead(nfd); err != nil {
-			_ = unix.Close(nfd)
-			c.releaseTCP()
-			return
-		}
-		el.connections[nfd] = c
-		err = el.loopOpen(c)
-		return
-	})
+	err = el.poller.UrgentTrigger(el.loopRegister, c)
 	if err != nil {
 		_ = unix.Close(nfd)
 		c.releaseTCP()
 	}
 	return nil
+}
+
+func (el *eventloop) loopAccept(_ netpoll.IOEvent) error {
+	if el.ln.network == "udp" {
+		return el.loopReadUDP(el.ln.fd)
+	}
+
+	nfd, sa, err := unix.Accept(el.ln.fd)
+	if err != nil {
+		if err == unix.EAGAIN {
+			return nil
+		}
+		el.getLogger().Errorf("Accept() fails due to error: %v", err)
+		return os.NewSyscallError("accept", err)
+	}
+	if err = os.NewSyscallError("fcntl nonblock", unix.SetNonblock(nfd, true)); err != nil {
+		return err
+	}
+
+	netAddr := socket.SockaddrToTCPOrUnixAddr(sa)
+	if el.svr.opts.TCPKeepAlive > 0 && el.svr.ln.network == "tcp" {
+		err = socket.SetKeepAlive(nfd, int(el.svr.opts.TCPKeepAlive/time.Second))
+		logging.LogErr(err)
+	}
+
+	c := newTCPConn(nfd, el, sa, netAddr)
+	if err = el.poller.AddRead(c.pollAttachment); err == nil {
+		el.connections[c.fd] = c
+		return el.loopOpen(c)
+	}
+	return err
 }
