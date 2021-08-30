@@ -19,28 +19,34 @@
 // SOFTWARE.
 
 // +build freebsd dragonfly darwin
+// +build !poll_opt
 
 package gnet
 
 import (
 	"runtime"
 
+	"github.com/panjf2000/gnet/errors"
 	"github.com/panjf2000/gnet/internal/netpoll"
 )
 
-func (svr *server) activateMainReactor(lockOSThread bool) {
+func (el *eventloop) activateMainReactor(lockOSThread bool) {
 	if lockOSThread {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 	}
 
-	defer svr.signalShutdown()
+	defer el.svr.signalShutdown()
 
-	err := svr.mainLoop.poller.Polling(func(fd int, filter int16) error { return svr.acceptNewConnection(fd) })
-	svr.logger.Infof("Main reactor is exiting due to error: %v", err)
+	err := el.poller.Polling(func(fd int, filter int16) error { return el.svr.acceptNewConnection(filter) })
+	if err == errors.ErrServerShutdown {
+		el.svr.opts.Logger.Debugf("main reactor is exiting in terms of the demand from user, %v", err)
+	} else if err != nil {
+		el.svr.opts.Logger.Errorf("main reactor is exiting due to error: %v", err)
+	}
 }
 
-func (svr *server) activateSubReactor(el *eventloop, lockOSThread bool) {
+func (el *eventloop) activateSubReactor(lockOSThread bool) {
 	if lockOSThread {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
@@ -48,7 +54,7 @@ func (svr *server) activateSubReactor(el *eventloop, lockOSThread bool) {
 
 	defer func() {
 		el.closeAllConns()
-		svr.signalShutdown()
+		el.svr.signalShutdown()
 	}()
 
 	err := el.poller.Polling(func(fd int, filter int16) (err error) {
@@ -57,12 +63,49 @@ func (svr *server) activateSubReactor(el *eventloop, lockOSThread bool) {
 			case netpoll.EVFilterSock:
 				err = el.loopCloseConn(c, nil)
 			case netpoll.EVFilterWrite:
-				err = el.loopWrite(c)
+				if !c.outboundBuffer.IsEmpty() {
+					err = el.loopWrite(c)
+				}
 			case netpoll.EVFilterRead:
 				err = el.loopRead(c)
 			}
 		}
 		return
 	})
-	svr.logger.Infof("Event-loop(%d) is exiting normally on the signal error: %v", el.idx, err)
+	if err == errors.ErrServerShutdown {
+		el.svr.opts.Logger.Debugf("event-loop(%d) is exiting in terms of the demand from user, %v", el.idx, err)
+	} else if err != nil {
+		el.svr.opts.Logger.Errorf("event-loop(%d) is exiting normally on the signal error: %v", el.idx, err)
+	}
+}
+
+func (el *eventloop) loopRun(lockOSThread bool) {
+	if lockOSThread {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+	}
+
+	defer func() {
+		el.closeAllConns()
+		el.ln.close()
+		el.svr.signalShutdown()
+	}()
+
+	err := el.poller.Polling(func(fd int, filter int16) (err error) {
+		if c, ack := el.connections[fd]; ack {
+			switch filter {
+			case netpoll.EVFilterSock:
+				err = el.loopCloseConn(c, nil)
+			case netpoll.EVFilterWrite:
+				if !c.outboundBuffer.IsEmpty() {
+					err = el.loopWrite(c)
+				}
+			case netpoll.EVFilterRead:
+				err = el.loopRead(c)
+			}
+			return
+		}
+		return el.loopAccept(filter)
+	})
+	el.getLogger().Debugf("event-loop(%d) is exiting due to error: %v", el.idx, err)
 }

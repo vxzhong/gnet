@@ -24,11 +24,14 @@ package netpoll
 
 import "golang.org/x/sys/unix"
 
+// IOEvent is the integer type of I/O events on BSD's.
+type IOEvent = int16
+
 const (
-	// InitEvents represents the initial length of poller event-list.
-	InitEvents = 64
-	// AsyncTasks is the maximum number of asynchronous tasks that the event-loop will process at one time.
-	AsyncTasks = 48
+	// InitPollEventsCap represents the initial capacity of poller event-list.
+	InitPollEventsCap = 64
+	// MaxAsyncTasksAtOneTime is the maximum amount of asynchronous tasks that the event-loop will process at one time.
+	MaxAsyncTasksAtOneTime = 128
 	// EVFilterWrite represents writeable events from sockets.
 	EVFilterWrite = unix.EVFILT_WRITE
 	// EVFilterRead represents readable events from sockets.
